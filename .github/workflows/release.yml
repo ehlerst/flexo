@@ -1,0 +1,39 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --locked --verbose
+        working-directory: ./flexo
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp flexo/target/release/flexo dist/
+          cd dist && tar -czvf flexo-linux-amd64.tar.gz flexo
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/flexo-linux-amd64.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

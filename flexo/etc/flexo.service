@@ -1,0 +1,13 @@
+[Unit]
+Description=Flexo Caching Proxy for Pacman
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/flexo
+Restart=always
+User=root
+# Flexo needs to write to /var/cache/flexo and potentially read from /etc/flexo
+
+[Install]
+WantedBy=multi-user.target
