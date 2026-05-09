@@ -30,6 +30,16 @@ use flexo::*;
 use flexo::metrics::*;
 use mirror_flexo::*;
 use prometheus::{Encoder, TextEncoder};
+use threadpool::ThreadPool;
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to the configuration file
+    #[arg(short, long, default_value = "/etc/flexo/flexo.toml")]
+    config: String,
+}
 use crate::http_headers::{PayloadOrigin, redirect_header, reply_header_bad_request, reply_header_forbidden, reply_header_internal_server_error, reply_header_not_found, reply_header_partial, reply_header_success};
 
 use crate::mirror_cache::{DemarshallError, TimestampedDownloadProviders};
@@ -59,6 +69,8 @@ const TIMEOUT_RECEIVE_CONTENT_LENGTH: Duration = Duration::from_secs(7);
 fn main() {
     env_logger::builder().format_timestamp_millis().init();
 
+    let args = Args::parse();
+
     // Exit the entire process when a single thread panics:
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
@@ -66,7 +78,13 @@ fn main() {
         std::process::exit(1);
     }));
 
-    let properties = mirror_config::load_config();
+    let properties = match mirror_config::load_config(Some(&args.config)) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("Unable to load configuration: {}", e);
+            std::process::exit(1);
+        }
+    };
     debug!("The following settings were fetched from the TOML file or environment variables: {:#?}", &properties);
     inspect_and_initialize_cache(&properties);
     match properties.low_speed_limit() {
@@ -83,6 +101,10 @@ fn main() {
             https://github.com/nroi/flexo/blob/master/mirror_selection.md for more information.");
             std::process::exit(1);
         }
+        Err(ProviderSelectionError::IoError(e)) => {
+            error!("IO error during initialization: {}", e);
+            std::process::exit(1);
+        }
     };
     let port = job_context.lock().unwrap().properties.port;
     let listen_ip_address =
@@ -91,22 +113,33 @@ fn main() {
     let addr = format!("{}:{}", listen_ip_address, port);
     let listener = match TcpListener::bind(&addr) {
         Ok(l) => l,
-        Err(e) => panic!("Unable to listen on address {}: {:?}", &addr, e),
+        Err(e) => {
+            error!("Unable to listen on address {}: {:?}", &addr, e);
+            std::process::exit(1);
+        }
     };
     // Synchronize file system access: We only want one cache purging process running at any given time.
     let cache_purge_mutex = Arc::new(Mutex::new(()));
 
+    let pool = ThreadPool::new(num_cpus::get() * 8);
+
     for client_stream in listener.incoming() {
-        let client_stream: TcpStream = client_stream.unwrap();
+        let client_stream: TcpStream = match client_stream {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Unable to establish connection: {:?}", e);
+                continue;
+            }
+        };
         debug!("Established connection with client.");
         let job_context = job_context.clone();
         let properties = properties.clone();
         let num_versions_retain = properties.num_versions_retain;
         let cache_directory = properties.cache_directory.clone();
-        debug!("All set, spawning new thread.");
+        debug!("All set, dispatching to thread pool.");
         let cache_purge_mutex = cache_purge_mutex.clone();
-        std::thread::spawn(move || {
-            debug!("Started new thread.");
+        pool.execute(move || {
+            debug!("Started new thread from pool.");
             let cache_tainted_result = serve_client(job_context, client_stream, properties);
             match (cache_tainted_result, num_versions_retain) {
                 (Ok(true), Some(0)) => {}
@@ -506,8 +539,12 @@ fn repo_name_from_get_request(get_request: &Request) -> Option<(String, StrPath)
     }
 }
 
+#[derive(thiserror::Error, Debug)]
 pub enum ProviderSelectionError {
+    #[error("No providers were found")]
     NoProviders,
+    #[error("IO error while initializing job context: {0}")]
+    IoError(#[from] io::Error),
 }
 
 fn initialize_job_context(properties: MirrorConfig) -> Result<JobContext<DownloadJob>, ProviderSelectionError> {
@@ -520,7 +557,7 @@ fn initialize_job_context(properties: MirrorConfig) -> Result<JobContext<Downloa
         MirrorSelectionMethod::Auto =>
             // With this mirror selection method, latency test have been run, so we store the results
             // in order to be able to choose fast mirrors next time without running them again.
-            mirror_cache::store_latency_test_results(&properties, providers),
+            mirror_cache::store_latency_test_results(&properties, providers)?,
         MirrorSelectionMethod::Predefined =>
             providers,
     };

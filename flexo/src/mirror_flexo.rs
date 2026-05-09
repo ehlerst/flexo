@@ -450,7 +450,7 @@ impl Job for DownloadJob {
     ) -> std::io::Result<DownloadJobResources> {
         let path = order.filepath(&properties);
         debug!("Attempt to create file: {:?}", &path);
-        fs_utils::create_dir_unless_exists(path.parent().unwrap());
+        fs_utils::create_dir_unless_exists(path.parent().unwrap())?;
         let f = match OpenOptions::new().create(true).append(true).open(&path) {
             Ok(f) => f,
             Err(e) => {
@@ -482,7 +482,7 @@ impl Job for DownloadJob {
 pub fn inspect_and_initialize_cache(mirror_config: &MirrorConfig) {
     let mut sum_size = 0;
     let mut count_cache_items = 0;
-    fs_utils::create_dir_unless_exists(Path::new(&mirror_config.cache_directory));
+    let _ = fs_utils::create_dir_unless_exists(Path::new(&mirror_config.cache_directory));
     for entry in WalkDir::new(&mirror_config.cache_directory) {
         let entry = entry.expect("Error while reading directory entry");
         if entry.file_type().is_file() && !entry.file_name().as_bytes().starts_with(b".") {
@@ -692,7 +692,7 @@ impl DownloadOrder {
             }
             Cacheability::NonCacheable(unique_id) => {
                 let path = Path::join(Path::new(UNCACHEABLE_DIRECTORY), &self.requested_path);
-                fs_utils::create_dir_unless_exists(path.parent().unwrap());
+                let _ = fs_utils::create_dir_unless_exists(path.parent().unwrap());
                 let filename = format!("{}-{}", &self.requested_path.to_str(), unique_id);
                 Path::new(UNCACHEABLE_DIRECTORY).join(filename)
             }
@@ -1023,7 +1023,7 @@ pub fn rated_providers(
     let mut num_successes = 0;
     let mut num_failures = 0;
     for mirror in filtered_mirror_urls.into_iter() {
-        let is_success = match mirror_fetch::measure_latency(&mirror.url, request_timeout) {
+        let is_success = match mirror_fetch::measure_latency(&mirror.url, request_timeout, &mirrors_auto.mirrors_status_latency_test_uri) {
             Err(e) => {
                 num_failures += 1;
                 if e.code() == CURLE_OPERATION_TIMEDOUT {

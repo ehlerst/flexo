@@ -1,4 +1,4 @@
-static CONFIG_FILE: &str = "/etc/flexo/flexo.toml";
+static DEFAULT_CONFIG_FILE: &str = "/etc/flexo/flexo.toml";
 
 extern crate serde;
 
@@ -77,8 +77,14 @@ pub struct MirrorsAutoConfig {
     pub num_mirrors: usize,
     pub mirrors_random_or_sort: MirrorsRandomOrSort,
     pub timeout: u64,
+    #[serde(default = "default_latency_test_uri")]
+    pub mirrors_status_latency_test_uri: String,
     #[serde(default)]
     pub allowed_countries: Vec<String>,
+}
+
+fn default_latency_test_uri() -> String {
+    "core/os/x86_64/core.db".to_owned()
 }
 
 impl MirrorsAutoConfig {
@@ -154,54 +160,68 @@ impl MirrorConfig {
     }
 }
 
-fn mirror_config_from_toml() -> MirrorConfig {
-    let config_contents = fs::read_to_string(CONFIG_FILE)
-        .unwrap_or_else(|_| panic!("Unable to read file: {}", CONFIG_FILE));
-    match toml::from_str(&config_contents) {
-        Ok(v) => v,
-        Err(e) => panic!("Unable to parse file {}: {:?}\nPlease make sure that the file contains \
-        valid TOML syntax and that all required attributes are set.", CONFIG_FILE, e)
+#[derive(thiserror::Error, Debug)]
+pub enum ConfigError {
+    #[error("Unable to read config file {0}: {1}")]
+    ReadError(String, std::io::Error),
+    #[error("Unable to parse config file {0}: {1}")]
+    ParseError(String, toml::de::Error),
+    #[error("Environment variable {0} is missing or invalid: {1}")]
+    EnvError(String, String),
+}
+
+fn mirror_config_from_toml(config_path: Option<&str>) -> Result<MirrorConfig, ConfigError> {
+    let path = config_path.unwrap_or(DEFAULT_CONFIG_FILE);
+    let config_contents = fs::read_to_string(path)
+        .map_err(|e| ConfigError::ReadError(path.to_owned(), e))?;
+    toml::from_str(&config_contents)
+        .map_err(|e| ConfigError::ParseError(path.to_owned(), e))
+}
+
+fn parse_env_toml<T>(s: &str) -> Result<Option<T>, ConfigError> where
+          T: serde::de::DeserializeOwned + TomlValue + 'static,
+{
+    match std::env::var(s) {
+        Ok(env_var) => {
+            let toml_value = T::toml_value_from_str(env_var);
+            let deserialized = toml::from_str::<T>(&toml_value)
+                .map_err(|e| ConfigError::EnvError(s.to_owned(), e.to_string()))?;
+            Ok(Some(deserialized))
+        },
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(e) => Err(ConfigError::EnvError(s.to_owned(), e.to_string())),
     }
 }
 
-#[derive(Deserialize)]
-struct DValue <T> {
-    value: T
-}
-
-fn parse_env_toml<T>(s: &str) -> Option<T> where
-          T: serde::de::DeserializeOwned + TomlValue + 'static,
-{
-    let env_var = std::env::var(s).ok()?;
-    let toml_document = format!("value = {}", T::toml_value_from_str(env_var));
-    // Our actual intent is to parse the environment variable as a TOML value, but the parser accepts only complete
-    // TOML documents with key-value pairs. So we construct a TOML document with a single key-value pair, and
-    // then extract the value.
-    let deserialized = toml::from_str::<DValue<T>>(&toml_document).unwrap();
-    Some(deserialized.value)
-}
-
-fn mirrors_auto_config_from_env() -> MirrorsAutoConfig {
-    let https_required = parse_env_toml::<bool>("FLEXO_MIRRORS_AUTO_HTTPS_REQUIRED").unwrap();
-    let ipv4 = parse_env_toml::<bool>("FLEXO_MIRRORS_AUTO_IPV4").unwrap();
-    let ipv6 = parse_env_toml::<bool>("FLEXO_MIRRORS_AUTO_IPV6").unwrap();
-    let max_score = parse_env_toml::<f64>("FLEXO_MIRRORS_AUTO_MAX_SCORE").unwrap();
-    let num_mirrors = parse_env_toml::<usize>("FLEXO_MIRRORS_AUTO_NUM_MIRRORS").unwrap();
-    let mirrors_random_or_sort = parse_env_toml::<MirrorsRandomOrSort>("FLEXO_MIRRORS_AUTO_MIRRORS_RANDOM_OR_SORT")
-        .unwrap();
-    let timeout = parse_env_toml::<u64>("FLEXO_MIRRORS_AUTO_TIMEOUT").unwrap();
-    let mirrors_status_json_endpoint = parse_env_toml::<String>("FLEXO_MIRRORS_AUTO_MIRRORS_STATUS_JSON_ENDPOINT")
+fn mirrors_auto_config_from_env() -> Result<MirrorsAutoConfig, ConfigError> {
+    let https_required = parse_env_toml::<bool>("FLEXO_MIRRORS_AUTO_HTTPS_REQUIRED")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_AUTO_HTTPS_REQUIRED".to_owned(), "Missing".to_owned()))?;
+    let ipv4 = parse_env_toml::<bool>("FLEXO_MIRRORS_AUTO_IPV4")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_AUTO_IPV4".to_owned(), "Missing".to_owned()))?;
+    let ipv6 = parse_env_toml::<bool>("FLEXO_MIRRORS_AUTO_IPV6")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_AUTO_IPV6".to_owned(), "Missing".to_owned()))?;
+    let max_score = parse_env_toml::<f64>("FLEXO_MIRRORS_AUTO_MAX_SCORE")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_AUTO_MAX_SCORE".to_owned(), "Missing".to_owned()))?;
+    let num_mirrors = parse_env_toml::<usize>("FLEXO_MIRRORS_AUTO_NUM_MIRRORS")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_AUTO_NUM_MIRRORS".to_owned(), "Missing".to_owned()))?;
+    let mirrors_random_or_sort = parse_env_toml::<MirrorsRandomOrSort>("FLEXO_MIRRORS_AUTO_MIRRORS_RANDOM_OR_SORT")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_AUTO_MIRRORS_RANDOM_OR_SORT".to_owned(), "Missing".to_owned()))?;
+    let timeout = parse_env_toml::<u64>("FLEXO_MIRRORS_AUTO_TIMEOUT")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_AUTO_TIMEOUT".to_owned(), "Missing".to_owned()))?;
+    let mirrors_status_latency_test_uri = parse_env_toml::<String>("FLEXO_MIRORS_AUTO_MIRRORS_STATUS_LATENCY_TEST_URI")?
+        .unwrap_or_else(default_latency_test_uri);
+    let mirrors_status_json_endpoint = parse_env_toml::<String>("FLEXO_MIRRORS_AUTO_MIRRORS_STATUS_JSON_ENDPOINT")?
             .unwrap_or_else(|| DEFAULT_JSON_URI.to_owned());
     let mirrors_status_json_endpoint_fallbacks =
-        parse_env_toml::<String>("FLEXO_MIRRORS_AUTO_MIRRORS_STATUS_JSON_ENDPOINT_FALLBACKS")
+        parse_env_toml::<String>("FLEXO_MIRRORS_AUTO_MIRRORS_STATUS_JSON_ENDPOINT_FALLBACKS")?
             .map(comma_separated_to_vec)
             .unwrap_or_default();
-    let allowed_countries = parse_env_toml::<String>("FLEXO_MIRRORS_AUTO_ALLOWED_COUNTRIES")
+    let allowed_countries = parse_env_toml::<String>("FLEXO_MIRRORS_AUTO_ALLOWED_COUNTRIES")?
         .map(comma_separated_to_vec)
         .unwrap_or_default();
     let mirrors_blacklist =
-        parse_env_toml::<Vec<String>>("FLEXO_MIRRORS_AUTO_MIRRORS_BLACKLIST").unwrap_or_else(Vec::new);
-    MirrorsAutoConfig {
+        parse_env_toml::<Vec<String>>("FLEXO_MIRRORS_AUTO_MIRRORS_BLACKLIST")?.unwrap_or_default();
+    Ok(MirrorsAutoConfig {
         mirrors_status_json_endpoint,
         mirrors_status_json_endpoint_fallbacks,
         mirrors_blacklist,
@@ -212,33 +232,39 @@ fn mirrors_auto_config_from_env() -> MirrorsAutoConfig {
         num_mirrors,
         mirrors_random_or_sort,
         timeout,
+        mirrors_status_latency_test_uri,
         allowed_countries,
-    }
+    })
 }
 
-fn mirror_config_from_env() -> MirrorConfig {
-    let cache_directory = parse_env_toml::<String>("FLEXO_CACHE_DIRECTORY").unwrap();
-    let mirrorlist_fallback_file = parse_env_toml::<String>("FLEXO_MIRRORLIST_FALLBACK_FILE").unwrap();
-    let mirrorlist_latency_test_results_file = parse_env_toml::<String>("FLEXO_MIRRORLIST_LATENCY_TEST_RESULTS_FILE");
-    let listen_ip_address = parse_env_toml::<String>("FLEXO_LISTEN_IP_ADDRESS");
-    let port = parse_env_toml::<u16>("FLEXO_PORT").unwrap();
-    let mirror_selection_method = parse_env_toml::<MirrorSelectionMethod>("FLEXO_MIRROR_SELECTION_METHOD").unwrap();
-    let mirrors_predefined = parse_env_toml::<Vec<String>>("FLEXO_MIRRORS_PREDEFINED").unwrap();
-    let connect_timeout = parse_env_toml::<u64>("FLEXO_CONNECT_TIMEOUT");
-    let low_speed_limit = parse_env_toml::<u32>("FLEXO_LOW_SPEED_LIMIT");
-    let low_speed_limit_formatted = parse_env_toml::<String>("FLEXO_LOW_SPEED_LIMIT_FORMATTED");
-    let low_speed_time_secs = parse_env_toml::<u64>("FLEXO_LOW_SPEED_TIME_SECS");
-    let max_speed_limit = parse_env_toml::<u64>("FLEXO_MAX_SPEED_LIMIT");
-    let refresh_latency_tests_after = parse_env_toml::<String>("FLEXO_REFRESH_LATENCY_TESTS_AFTER");
-    let custom_repo_env = parse_env_toml::<String>("FLEXO_CUSTOM_REPO");
-    let num_versions_retain = parse_env_toml::<u32>("FLEXO_NUM_VERSIONS_RETAIN");
+fn mirror_config_from_env() -> Result<MirrorConfig, ConfigError> {
+    let cache_directory = parse_env_toml::<String>("FLEXO_CACHE_DIRECTORY")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_CACHE_DIRECTORY".to_owned(), "Missing".to_owned()))?;
+    let mirrorlist_fallback_file = parse_env_toml::<String>("FLEXO_MIRRORLIST_FALLBACK_FILE")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORLIST_FALLBACK_FILE".to_owned(), "Missing".to_owned()))?;
+    let mirrorlist_latency_test_results_file = parse_env_toml::<String>("FLEXO_MIRRORLIST_LATENCY_TEST_RESULTS_FILE")?;
+    let listen_ip_address = parse_env_toml::<String>("FLEXO_LISTEN_IP_ADDRESS")?;
+    let port = parse_env_toml::<u16>("FLEXO_PORT")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_PORT".to_owned(), "Missing".to_owned()))?;
+    let mirror_selection_method = parse_env_toml::<MirrorSelectionMethod>("FLEXO_MIRROR_SELECTION_METHOD")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRROR_SELECTION_METHOD".to_owned(), "Missing".to_owned()))?;
+    let mirrors_predefined = parse_env_toml::<Vec<String>>("FLEXO_MIRRORS_PREDEFINED")?
+        .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_PREDEFINED".to_owned(), "Missing".to_owned()))?;
+    let connect_timeout = parse_env_toml::<u64>("FLEXO_CONNECT_TIMEOUT")?;
+    let low_speed_limit = parse_env_toml::<u32>("FLEXO_LOW_SPEED_LIMIT")?;
+    let low_speed_limit_formatted = parse_env_toml::<String>("FLEXO_LOW_SPEED_LIMIT_FORMATTED")?;
+    let low_speed_time_secs = parse_env_toml::<u64>("FLEXO_LOW_SPEED_TIME_SECS")?;
+    let max_speed_limit = parse_env_toml::<u64>("FLEXO_MAX_SPEED_LIMIT")?;
+    let refresh_latency_tests_after = parse_env_toml::<String>("FLEXO_REFRESH_LATENCY_TESTS_AFTER")?;
+    let custom_repo_env = parse_env_toml::<String>("FLEXO_CUSTOM_REPO")?;
+    let num_versions_retain = parse_env_toml::<u32>("FLEXO_NUM_VERSIONS_RETAIN")?;
     let custom_repo = custom_repos_from_env(custom_repo_env);
 
     let mirrors_auto = match mirror_selection_method {
-        MirrorSelectionMethod::Auto => Some(mirrors_auto_config_from_env()),
+        MirrorSelectionMethod::Auto => Some(mirrors_auto_config_from_env()?),
         MirrorSelectionMethod::Predefined => None,
     };
-    MirrorConfig {
+    Ok(MirrorConfig {
         cache_directory,
         mirrorlist_fallback_file,
         mirrorlist_latency_test_results_file,
@@ -255,7 +281,7 @@ fn mirror_config_from_env() -> MirrorConfig {
         max_speed_limit,
         num_versions_retain,
         mirrors_auto,
-    }
+    })
 }
 
 fn comma_separated_to_vec(comma_separated: String) -> Vec<String> {
@@ -271,23 +297,23 @@ fn custom_repos_from_env(maybe_env: Option<String>) -> Option<Vec<CustomRepo>> {
     match maybe_env {
         None => None,
         Some(cr) => {
-            cr.split(' ').map(|s| {
+            cr.split(' ').filter_map(|s| {
                 s.split_once('@').map(|(name, url)| {
                     CustomRepo {
                         name: name.to_owned(),
                         url: url.to_owned(),
                     }
                 })
-            }).collect()
+            }).collect::<Vec<CustomRepo>>().into()
         }
     }
 }
 
-pub fn load_config() -> MirrorConfig {
+pub fn load_config(config_path: Option<&str>) -> Result<MirrorConfig, ConfigError> {
     if std::env::vars().any(|(key, _value)| key.starts_with("FLEXO_")) {
         mirror_config_from_env()
     } else {
-        mirror_config_from_toml()
+        mirror_config_from_toml(config_path)
     }
 }
 

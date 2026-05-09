@@ -201,9 +201,9 @@ pub fn fetch_providers_from_json_endpoint(json_endpoint_uri: &str) -> Result<Vec
     Ok(mirrors)
 }
 
-pub fn measure_latency(url: &str, timeout: Duration) -> Result<MirrorResults, curl::Error> {
+pub fn measure_latency(url: &str, timeout: Duration, test_uri: &str) -> Result<MirrorResults, curl::Error> {
     let mut easy = Easy::new();
-    let url = url.to_owned() + "core/os/x86_64/core.db";
+    let url = url.to_owned() + test_uri;
     easy.url(&url)?;
     easy.nobody(true)?;
     easy.follow_location(true)?;
@@ -222,7 +222,8 @@ pub fn measure_latency(url: &str, timeout: Duration) -> Result<MirrorResults, cu
         // Cloudflare protected server usually yields excellent results, but these results are meaningless since
         // Cloudflare uses caching: So the latency might have been low only because the request could be served
         // from the cache, but we can't assume that every request will be a cache hit.
-        if header.eq_ignore_ascii_case("server: cloudflare\r\n".as_bytes()) {
+        let header_str = String::from_utf8_lossy(header).to_lowercase();
+        if header_str.contains("server: cloudflare") {
             debug!("Remote mirror {} appears to use CloudFlare, this mirror will be ignored.", &url);
             false
         } else {
