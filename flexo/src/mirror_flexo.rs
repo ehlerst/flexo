@@ -261,9 +261,11 @@ impl PartialOrd for MirrorResults {
     }
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum DownloadJobError {
-    CurlError(curl::Error),
+    #[error("Curl error: {0}")]
+    CurlError(#[from] curl::Error),
+    #[error("HTTP failure status: {0}")]
     HttpFailureStatus(u32),
 }
 
@@ -275,15 +277,10 @@ pub struct DownloadJob {
     properties: MirrorConfig,
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum OrderError {
-    IoError(std::io::Error),
-}
-
-impl From<std::io::Error> for OrderError {
-    fn from(error: std::io::Error) -> Self {
-        OrderError::IoError(error)
-    }
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1093,7 +1090,7 @@ pub fn read_client_header<T>(client_stream: &mut T) -> Result<ClientResponse, Cl
         match res {
             Ok(Status::Complete(_result)) => {
                 debug!("Received header from client");
-                break(Ok(ClientResponse::Request(Request::new(req)?)))
+                break Ok(ClientResponse::Request(Request::new(req)?))
             }
             Ok(Status::Partial) => {
                 {}
