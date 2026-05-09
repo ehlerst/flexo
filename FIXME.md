@@ -15,8 +15,8 @@ This document tracks identified issues, code smells, and areas for improvement i
 - [ ] **Mutex Contention**: Audit `Arc<Mutex<JobContext>>` and other global locks. High contention on these locks could bottleneck performance during parallel downloads.
 
 ## Security
-- [ ] **`unsafe` Audit**: The `sendfile64` implementation in `main.rs` needs a rigorous audit to ensure it correctly handles all edge cases (e.g., 32-bit overflows, unexpected file truncations).
-- [ ] **Path Traversal**: Review `permitted_path` and `valid_path` in `main.rs` to ensure they are robust against advanced path traversal techniques.
+- [x] **`unsafe` Audit**: The `sendfile64` implementation in `main.rs` needs a rigorous audit to ensure it correctly handles all edge cases (e.g., 32-bit overflows, unexpected file truncations).
+- [x] **Path Traversal**: Review `permitted_path` and `valid_path` in `main.rs` to ensure they are robust against advanced path traversal techniques. (Audited: components() check is robust against .. and .).
 
 ## Portability and Configuration
 - [x] **Hardcoded Paths**: Remove hardcoded paths like `/etc/flexo/flexo.toml` and `/var/cache/flexo`. Use defaults that can be overridden via command-line arguments or environment variables.
