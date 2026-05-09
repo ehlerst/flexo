@@ -4,3 +4,17 @@
 flexo.tar.gz
 
 stickiness.md
+
+# Rust build artifacts
+target/
+**/target/
+
+# Arch Linux package files
+*.pkg.tar.zst
+*.pkg.tar.xz
+*.pkg.tar
+**/packages/*.pkg.tar*
+
+# Test artifacts
+**/pkg.tar
+**/random_small
