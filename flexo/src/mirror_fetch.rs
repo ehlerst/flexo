@@ -5,7 +5,6 @@ use curl::easy::{Easy, HttpVersion};
 use std::time::Duration;
 use std::str;
 use crate::MirrorResults;
-use crate::mirror_fetch::MirrorFetchError::{CurlError, DemarshallError, Utf8Error};
 
 // If Flexo starts automatically with each system boot, it may happen that internet connectivity is not immediately
 // available. For this reason, more than one attempt is made to connect to the server, hoping that the client
@@ -50,29 +49,14 @@ pub enum MirrorProtocol {
     Ftp,
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum MirrorFetchError {
-    DemarshallError(serde_json::error::Error),
-    CurlError(curl::Error),
-    Utf8Error(str::Utf8Error),
-}
-
-impl From<curl::Error> for MirrorFetchError {
-    fn from(error: curl::Error) -> Self {
-        CurlError(error)
-    }
-}
-
-impl From<serde_json::Error> for MirrorFetchError {
-    fn from(error: serde_json::Error) -> Self {
-        DemarshallError(error)
-    }
-}
-
-impl From<str::Utf8Error> for MirrorFetchError {
-    fn from(error: str::Utf8Error) -> Self {
-        Utf8Error(error)
-    }
+    #[error("Deserialization error: {0}")]
+    DemarshallError(#[from] serde_json::Error),
+    #[error("Curl error: {0}")]
+    CurlError(#[from] curl::Error),
+    #[error("UTF-8 error: {0}")]
+    Utf8Error(#[from] str::Utf8Error),
 }
 
 #[derive(Deserialize, Debug)]
@@ -94,11 +78,11 @@ pub struct MirrorUrlOption {
 impl MirrorUrlOption {
     pub fn mirror_url(self) -> Option<Mirror> {
         let protocol = self.protocol?;
-        let last_sync = self.last_sync?;
-        let completion_pct = self.completion_pct?;
-        let delay = self.delay?;
-        let duration_avg = self.duration_avg?;
-        let duration_stddev = self.duration_stddev?;
+        let _last_sync = self.last_sync?;
+        let _completion_pct = self.completion_pct?;
+        let _delay = self.delay?;
+        let _duration_avg = self.duration_avg?;
+        let _duration_stddev = self.duration_stddev?;
         let score = (self.score? * SCORE_SCALE as f64) as u64;
         let country_code = self.country_code?;
         let ipv4 = self.ipv4?;
@@ -106,11 +90,11 @@ impl MirrorUrlOption {
         Some(Mirror {
             url: self.url,
             protocol,
-            last_sync,
-            completion_pct,
-            delay,
-            duration_avg,
-            duration_stddev,
+            _last_sync,
+            _completion_pct,
+            _delay,
+            _duration_avg,
+            _duration_stddev,
             score,
             country_code,
             ipv4,
@@ -123,11 +107,11 @@ impl MirrorUrlOption {
 pub struct Mirror {
     pub url: String,
     pub protocol: MirrorProtocol,
-    pub last_sync: String,
-    pub completion_pct: f64,
-    pub delay: i32,
-    pub duration_avg: f64,
-    pub duration_stddev: f64,
+    pub _last_sync: String,
+    pub _completion_pct: f64,
+    pub _delay: i32,
+    pub _duration_avg: f64,
+    pub _duration_stddev: f64,
     pub score: u64,
     pub country_code: String,
     pub ipv4: bool,
