@@ -140,7 +140,9 @@ fn main() {
         let cache_purge_mutex = cache_purge_mutex.clone();
         pool.execute(move || {
             debug!("Started new thread from pool.");
+            ACTIVE_CLIENT_TRANSFERS.inc();
             let cache_tainted_result = serve_client(job_context, client_stream, properties);
+            ACTIVE_CLIENT_TRANSFERS.dec();
             match (cache_tainted_result, num_versions_retain) {
                 (Ok(true), Some(0)) => {}
                 (Ok(true), Some(v)) => {

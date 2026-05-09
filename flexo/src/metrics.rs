@@ -37,7 +37,12 @@ lazy_static! {
     ).unwrap();
 
     pub static ref CONCURRENT_DOWNLOADS: IntGauge = register_int_gauge_with_registry!(
-        Opts::new("flexo_concurrent_downloads_active", "Number of concurrent downloads currently active"),
+        Opts::new("flexo_concurrent_downloads_active", "Number of concurrent upstream downloads from mirrors currently active"),
+        &REGISTRY
+    ).unwrap();
+
+    pub static ref ACTIVE_CLIENT_TRANSFERS: IntGauge = register_int_gauge_with_registry!(
+        Opts::new("flexo_active_client_transfers_active", "Number of clients currently receiving data from the proxy"),
         &REGISTRY
     ).unwrap();
 
