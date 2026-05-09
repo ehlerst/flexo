@@ -75,7 +75,8 @@ pub struct MirrorsAutoConfig {
     pub ipv6: bool,
     pub max_score: f64,
     pub num_mirrors: usize,
-    pub _mirrors_random_or_sort: MirrorsRandomOrSort,
+    #[allow(dead_code)]
+    pub mirrors_random_or_sort: MirrorsRandomOrSort,
     pub timeout: u64,
     #[serde(default = "default_latency_test_uri")]
     pub mirrors_status_latency_test_uri: String,
@@ -101,7 +102,8 @@ impl Properties for MirrorConfig {}
 #[derive(Deserialize, Debug, Clone)]
 pub struct MirrorConfig {
     pub cache_directory: String,
-    pub _mirrorlist_fallback_file: String,
+    #[allow(dead_code)]
+    pub mirrorlist_fallback_file: String,
     pub mirrorlist_latency_test_results_file: Option<String>,
     pub refresh_latency_tests_after: Option<String>,
     pub port: u16,
@@ -204,7 +206,7 @@ fn mirrors_auto_config_from_env() -> Result<MirrorsAutoConfig, ConfigError> {
         .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_AUTO_MAX_SCORE".to_owned(), "Missing".to_owned()))?;
     let num_mirrors = parse_env_toml::<usize>("FLEXO_MIRRORS_AUTO_NUM_MIRRORS")?
         .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_AUTO_NUM_MIRRORS".to_owned(), "Missing".to_owned()))?;
-    let _mirrors_random_or_sort = parse_env_toml::<MirrorsRandomOrSort>("FLEXO_MIRRORS_AUTO_MIRRORS_RANDOM_OR_SORT")?
+    let mirrors_random_or_sort = parse_env_toml::<MirrorsRandomOrSort>("FLEXO_MIRRORS_AUTO_MIRRORS_RANDOM_OR_SORT")?
         .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_AUTO_MIRRORS_RANDOM_OR_SORT".to_owned(), "Missing".to_owned()))?;
     let timeout = parse_env_toml::<u64>("FLEXO_MIRRORS_AUTO_TIMEOUT")?
         .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORS_AUTO_TIMEOUT".to_owned(), "Missing".to_owned()))?;
@@ -230,7 +232,7 @@ fn mirrors_auto_config_from_env() -> Result<MirrorsAutoConfig, ConfigError> {
         ipv6,
         max_score,
         num_mirrors,
-        _mirrors_random_or_sort,
+        mirrors_random_or_sort,
         timeout,
         mirrors_status_latency_test_uri,
         allowed_countries,
@@ -240,7 +242,7 @@ fn mirrors_auto_config_from_env() -> Result<MirrorsAutoConfig, ConfigError> {
 fn mirror_config_from_env() -> Result<MirrorConfig, ConfigError> {
     let cache_directory = parse_env_toml::<String>("FLEXO_CACHE_DIRECTORY")?
         .ok_or_else(|| ConfigError::EnvError("FLEXO_CACHE_DIRECTORY".to_owned(), "Missing".to_owned()))?;
-    let _mirrorlist_fallback_file = parse_env_toml::<String>("FLEXO_MIRRORLIST_FALLBACK_FILE")?
+    let mirrorlist_fallback_file = parse_env_toml::<String>("FLEXO_MIRRORLIST_FALLBACK_FILE")?
         .ok_or_else(|| ConfigError::EnvError("FLEXO_MIRRORLIST_FALLBACK_FILE".to_owned(), "Missing".to_owned()))?;
     let mirrorlist_latency_test_results_file = parse_env_toml::<String>("FLEXO_MIRRORLIST_LATENCY_TEST_RESULTS_FILE")?;
     let listen_ip_address = parse_env_toml::<String>("FLEXO_LISTEN_IP_ADDRESS")?;
@@ -266,7 +268,7 @@ fn mirror_config_from_env() -> Result<MirrorConfig, ConfigError> {
     };
     Ok(MirrorConfig {
         cache_directory,
-        _mirrorlist_fallback_file,
+        mirrorlist_fallback_file,
         mirrorlist_latency_test_results_file,
         refresh_latency_tests_after,
         port,
