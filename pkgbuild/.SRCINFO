@@ -1,0 +1,20 @@
+pkgbase = flexo-metrics-git
+	pkgdesc = A caching proxy for Arch Linux pacman (Fork with Prometheus Metrics)
+	pkgver = 1.7.0.beta4
+	pkgrel = 1
+	url = https://github.com/ehlerst/flexo
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = rust
+	makedepends = cargo
+	makedepends = git
+	depends = curl
+	depends = gcc-libs
+	provides = flexo
+	conflicts = flexo
+	conflicts = flexo-git
+	source = git+https://github.com/ehlerst/flexo.git#branch=prometheus-metrics
+	sha256sums = SKIP
+
+pkgname = flexo-metrics-git
