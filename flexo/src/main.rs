@@ -4,7 +4,6 @@ extern crate http;
 extern crate log;
 extern crate rand;
 
-use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io;
@@ -28,7 +27,19 @@ use libc::off64_t;
 use tempfile::tempfile;
 
 use flexo::*;
+use flexo::metrics::*;
 use mirror_flexo::*;
+use prometheus::{Encoder, TextEncoder};
+use threadpool::ThreadPool;
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to the configuration file
+    #[arg(short, long, default_value = "/etc/flexo/flexo.toml")]
+    config: String,
+}
 use crate::http_headers::{PayloadOrigin, redirect_header, reply_header_bad_request, reply_header_forbidden, reply_header_internal_server_error, reply_header_not_found, reply_header_partial, reply_header_success};
 
 use crate::mirror_cache::{DemarshallError, TimestampedDownloadProviders};
@@ -58,6 +69,8 @@ const TIMEOUT_RECEIVE_CONTENT_LENGTH: Duration = Duration::from_secs(7);
 fn main() {
     env_logger::builder().format_timestamp_millis().init();
 
+    let args = Args::parse();
+
     // Exit the entire process when a single thread panics:
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
@@ -65,7 +78,13 @@ fn main() {
         std::process::exit(1);
     }));
 
-    let properties = mirror_config::load_config();
+    let properties = match mirror_config::load_config(Some(&args.config)) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("Unable to load configuration: {}", e);
+            std::process::exit(1);
+        }
+    };
     debug!("The following settings were fetched from the TOML file or environment variables: {:#?}", &properties);
     inspect_and_initialize_cache(&properties);
     match properties.low_speed_limit() {
@@ -82,6 +101,10 @@ fn main() {
             https://github.com/nroi/flexo/blob/master/mirror_selection.md for more information.");
             std::process::exit(1);
         }
+        Err(ProviderSelectionError::IoError(e)) => {
+            error!("IO error during initialization: {}", e);
+            std::process::exit(1);
+        }
     };
     let port = job_context.lock().unwrap().properties.port;
     let listen_ip_address =
@@ -90,22 +113,33 @@ fn main() {
     let addr = format!("{}:{}", listen_ip_address, port);
     let listener = match TcpListener::bind(&addr) {
         Ok(l) => l,
-        Err(e) => panic!("Unable to listen on address {}: {:?}", &addr, e),
+        Err(e) => {
+            error!("Unable to listen on address {}: {:?}", &addr, e);
+            std::process::exit(1);
+        }
     };
     // Synchronize file system access: We only want one cache purging process running at any given time.
     let cache_purge_mutex = Arc::new(Mutex::new(()));
 
+    let pool = ThreadPool::new(num_cpus::get() * 8);
+
     for client_stream in listener.incoming() {
-        let client_stream: TcpStream = client_stream.unwrap();
+        let client_stream: TcpStream = match client_stream {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Unable to establish connection: {:?}", e);
+                continue;
+            }
+        };
         debug!("Established connection with client.");
         let job_context = job_context.clone();
         let properties = properties.clone();
         let num_versions_retain = properties.num_versions_retain;
         let cache_directory = properties.cache_directory.clone();
-        debug!("All set, spawning new thread.");
+        debug!("All set, dispatching to thread pool.");
         let cache_purge_mutex = cache_purge_mutex.clone();
-        std::thread::spawn(move || {
-            debug!("Started new thread.");
+        pool.execute(move || {
+            debug!("Started new thread from pool.");
             let cache_tainted_result = serve_client(job_context, client_stream, properties);
             match (cache_tainted_result, num_versions_retain) {
                 (Ok(true), Some(0)) => {}
@@ -254,13 +288,11 @@ fn serve_request(
         serve_200_ok_empty(client_stream)?;
         Ok(PayloadOrigin::NoPayload)
     } else if request.path.to_str() == "metrics" {
-        let metrics_map: HashMap<String, ProviderMetrics> = job_context.lock().unwrap().provider_metrics()
-            .iter()
-            .map(|(k, v)| (k.identifier.clone(), *v))
-            .collect();
-        let serialized = serde_json::to_string_pretty(&metrics_map).unwrap();
-        serve_200_ok_body(client_stream, serialized.as_bytes())?;
-        client_stream.write_all(serialized.as_bytes())?;
+        let mut buffer = Vec::new();
+        let encoder = TextEncoder::new();
+        let metric_families = REGISTRY.gather();
+        encoder.encode(&metric_families, &mut buffer).unwrap();
+        serve_200_ok_body(client_stream, &buffer)?;
         Ok(PayloadOrigin::NoPayload)
     } else if request.path.to_str() == "reset-metrics" && request.method == Post {
         {
@@ -271,6 +303,14 @@ fn serve_request(
         Ok(PayloadOrigin::NoPayload)
     } else {
         let order = DownloadOrder::new(request.path);
+        let req_type = if order.requested_path.to_str().ends_with(".pkg.tar.zst") {
+            "package"
+        } else if order.requested_path.to_str().ends_with(".db") {
+            "db"
+        } else {
+            "other"
+        };
+        REQUESTS_TOTAL.with_label_values(&[req_type]).inc();
         debug!("Schedule new job");
         let result = job_context.lock().unwrap().try_schedule(order.clone(), custom_provider, request.resume_from);
         match result {
@@ -368,8 +408,12 @@ fn serve_client(
                 match serve_request(job_context.clone(), &mut client_stream, properties.clone(), get_request) {
                     Ok(payload_origin) => {
                         let payload_origin_human_readable = match payload_origin {
-                            PayloadOrigin::Cache => "CACHE HIT",
+                            PayloadOrigin::Cache => {
+                                CACHE_HITS.inc();
+                                "CACHE HIT"
+                            },
                             PayloadOrigin::RemoteMirror => {
+                                CACHE_MISSES.inc();
                                 // When the payload is downloaded from a remote mirror, a new file is stored in the
                                 // cache.
                                 cache_tainted = true;
@@ -495,8 +539,12 @@ fn repo_name_from_get_request(get_request: &Request) -> Option<(String, StrPath)
     }
 }
 
+#[derive(thiserror::Error, Debug)]
 pub enum ProviderSelectionError {
+    #[error("No providers were found")]
     NoProviders,
+    #[error("IO error while initializing job context: {0}")]
+    IoError(#[from] io::Error),
 }
 
 fn initialize_job_context(properties: MirrorConfig) -> Result<JobContext<DownloadJob>, ProviderSelectionError> {
@@ -509,7 +557,7 @@ fn initialize_job_context(properties: MirrorConfig) -> Result<JobContext<Downloa
         MirrorSelectionMethod::Auto =>
             // With this mirror selection method, latency test have been run, so we store the results
             // in order to be able to choose fast mirrors next time without running them again.
-            mirror_cache::store_latency_test_results(&properties, providers),
+            mirror_cache::store_latency_test_results(&properties, providers)?,
         MirrorSelectionMethod::Predefined =>
             providers,
     };
@@ -751,6 +799,7 @@ fn serve_from_growing_file(
             let result = send_payload_and_flush(&mut file, filesize, client_received as i64, client_stream);
             match result {
                 Ok(size) => {
+                    BYTES_SERVED_FROM_MIRROR.inc_by(size as u64 - client_received);
                     client_received = size as u64;
                 }
                 Err(e) => {
@@ -815,10 +864,13 @@ fn serve_from_complete_file(
         Some(r) => reply_header_partial(content_length, r, PayloadOrigin::Cache)
     };
     client_stream.write_all(header.as_bytes())?;
-    let bytes_sent = resume_from.unwrap_or(0) as i64;
-    let result = send_payload_and_flush(&mut file, filesize, bytes_sent, client_stream);
+    let bytes_sent_before = resume_from.unwrap_or(0) as i64;
+    let result = send_payload_and_flush(&mut file, filesize, bytes_sent_before, client_stream);
     match &result {
-        Ok(s) => debug!("{} bytes have been transmitted to the client.", s),
+        Ok(s) => {
+            BYTES_SERVED_FROM_CACHE.inc_by((*s - bytes_sent_before) as u64);
+            debug!("{} bytes have been transmitted to the client.", s)
+        },
         Err(e) => warn!("Error while sending payload: {:?}", e),
     }
     result
@@ -852,10 +904,15 @@ fn send_payload<T>(source: &mut File, filesize: u64, bytes_sent: i64, receiver: 
     let size = unsafe {
         let mut offset = bytes_sent as off64_t;
         while (offset as u64) < filesize {
-            let count = cmp::min(filesize as usize - offset as usize, MAX_SENDFILE_COUNT);
+            let remaining = filesize - offset as u64;
+            let count = cmp::min(remaining, MAX_SENDFILE_COUNT as u64) as usize;
             let size: isize = libc::sendfile64(sfd, fd, &mut offset, count);
             if size == -1 {
                 return Err(std::io::Error::last_os_error());
+            }
+            if size == 0 {
+                // Should not happen if offset < filesize, but prevents infinite loop if file is truncated.
+                break;
             }
         }
         offset

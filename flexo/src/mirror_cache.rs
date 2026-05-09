@@ -12,8 +12,6 @@ use crate::mirror_config::MirrorConfig;
 use crate::mirror_flexo::DownloadProvider;
 use crate::fs_utils::create_dir_unless_exists;
 
-const DEFAULT_LATENCY_TEST_RESULTS_FILE: &str = "/var/cache/flexo/state/latency_test_results.json";
-
 // Bump this version if a non-backwards compatible change has occurred.
 const TIMESTAMPED_DOWNLOAD_PROVIDERS_VERSION: u32 = 3;
 
@@ -29,23 +27,22 @@ pub struct VersionOnly {
     pub version: Option<u32>,
 }
 
-fn latency_test_results_file(properties: &MirrorConfig) -> &str {
+fn latency_test_results_file(properties: &MirrorConfig) -> String {
     match &properties.mirrorlist_latency_test_results_file {
         None => {
-            warn!("The setting \"mirrorlist_latency_test_results_file\" is missing, will use default value {}. \
-            Add the setting to the TOML config file or environment variable to avoid this warning.",
-                  DEFAULT_LATENCY_TEST_RESULTS_FILE
-            );
-            DEFAULT_LATENCY_TEST_RESULTS_FILE
+            let cache_dir = Path::new(&properties.cache_directory);
+            // If cache_directory is /var/cache/flexo/pkg, we want to store it in /var/cache/flexo/state
+            let state_dir = cache_dir.parent().unwrap_or(cache_dir).join("state");
+            state_dir.join("latency_test_results.json").to_str().unwrap().to_owned()
         }
-        Some(p) => p,
+        Some(p) => p.clone(),
     }
 }
 
 pub fn store_latency_test_results(
     properties: &MirrorConfig,
     download_providers: Vec<DownloadProvider>
-) -> Vec<DownloadProvider> {
+) -> io::Result<Vec<DownloadProvider>> {
     let timestamped = TimestampedDownloadProviders {
         version: Some(TIMESTAMPED_DOWNLOAD_PROVIDERS_VERSION),
         timestamp: format!("{:?}", chrono::Utc::now()),
@@ -53,15 +50,15 @@ pub fn store_latency_test_results(
     };
     let serialized = serde_json::to_string_pretty(&timestamped).unwrap();
     let file_path = latency_test_results_file(properties);
-    let path = Path::new(file_path);
-    let directory = path.parent().unwrap();
-    create_dir_unless_exists(&directory);
-    fs::write(file_path, serialized)
-        .unwrap_or_else(|_| panic!("Unable to write file: {}", file_path));
+    let path = Path::new(&file_path);
+    if let Some(directory) = path.parent() {
+        create_dir_unless_exists(directory)?;
+    }
+    fs::write(&file_path, serialized)?;
 
     // Return the providers so that ownership is given back to the caller. This way, we can avoid
     // copying the providers.
-    timestamped.download_providers
+    Ok(timestamped.download_providers)
 }
 
 #[derive(Debug)]
