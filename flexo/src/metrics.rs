@@ -20,7 +20,12 @@ lazy_static! {
     ).unwrap();
 
     pub static ref BYTES_SERVED_FROM_MIRROR: IntCounter = register_int_counter_with_registry!(
-        Opts::new("flexo_bytes_served_from_mirror_total", "Total bytes served from remote mirrors"),
+        Opts::new("flexo_bytes_served_from_mirror_total", "Total bytes served to clients from remote mirrors (including shared downloads)"),
+        &REGISTRY
+    ).unwrap();
+
+    pub static ref UPSTREAM_BYTES_DOWNLOADED: IntCounter = register_int_counter_with_registry!(
+        Opts::new("flexo_upstream_bytes_downloaded_total", "Total bytes actually downloaded from remote mirrors by the proxy"),
         &REGISTRY
     ).unwrap();
 

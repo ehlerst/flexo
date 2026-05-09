@@ -21,6 +21,7 @@ use walkdir::WalkDir;
 use flexo::*;
 
 use crate::mirror_config::{MirrorConfig, MirrorsAutoConfig};
+use crate::metrics::*;
 use crate::{fs_utils, mirror_fetch};
 use crate::mirror_fetch::{MirrorProtocol, Mirror};
 use crate::str_path::StrPath;
@@ -771,6 +772,7 @@ impl Handler for DownloadState {
         if job_resources.file_state.size_written == 0 {
             debug!("Begin to transfer body to file {}", self.job_state.order.requested_path.to_str());
         }
+        UPSTREAM_BYTES_DOWNLOADED.inc_by(data.len() as u64);
         job_resources.file_state.size_written += data.len() as u64;
         match job_resources.file_state.buf_writer.write_all(data) {
             Ok(()) => {
