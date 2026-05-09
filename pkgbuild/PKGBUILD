@@ -1,0 +1,33 @@
+# Maintainer: Tim Ehlers ehlerst@yahoo.com
+pkgname=flexo-metrics-git
+_pkgname=flexo
+pkgver=1.7.0.beta4
+pkgrel=1
+pkgdesc="A caching proxy for Arch Linux pacman (Fork with Prometheus Metrics)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/ehlerst/flexo"
+license=('MIT')
+depends=('curl' 'gcc-libs')
+makedepends=('rust' 'cargo' 'git')
+provides=('flexo')
+conflicts=('flexo' 'flexo-git')
+source=("git+${url}.git#branch=prometheus-metrics")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^v//'
+}
+
+build() {
+  cd "$_pkgname/flexo"
+  cargo build --release --locked
+}
+
+package() {
+  cd "$_pkgname"
+  install -Dm755 "flexo/target/release/flexo" "$pkgdir/usr/bin/flexo"
+  install -Dm644 "flexo/etc/flexo.service" "$pkgdir/usr/lib/systemd/system/flexo.service"
+  install -Dm644 "flexo/conf/flexo.toml" "$pkgdir/etc/flexo/flexo.toml"
+  install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
